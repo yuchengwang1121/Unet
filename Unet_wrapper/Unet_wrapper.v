@@ -106,6 +106,7 @@
   parameter [15:0] ID_register_offset = 16'h0000; 
   parameter [15:0] CC_register_offset = 16'h3000; 
   parameter [15:0] SP_register_offset = 16'h4000;
+  parameter [31:0] statusreport_reg   = 32'h1234_5678;
 
   //parameter for FSM
   parameter [2:0] Init     = 3'b000,
@@ -206,7 +207,6 @@
       Unet_M01_AXI_arsize   <= 3'b0;
       Unet_M01_AXI_arvalid  <= 1'b0;
       Unet_M01_AXI_rready   <= 1'b0;
-      Unet_M01_AXI_awaddr   <= 32'b0;
       Unet_M01_AXI_awburst  <= 2'b0;
       Unet_M01_AXI_awcache  <= 4'b0;
       Unet_M01_AXI_awid     <= 12'b0;
@@ -218,8 +218,6 @@
       Unet_M01_AXI_awsize   <= 3'b0;
       Unet_M01_AXI_awvalid  <= 1'b0;
       Unet_M01_AXI_bready   <= 1'b0;
-      Unet_M01_AXI_wdata    <= 32'b0;
-      Unet_M01_AXI_wlast    <= 1'b0;
       Unet_M01_AXI_wstrb    <= 4'b0;
       Unet_M01_AXI_wvalid   <= 1'b0;
     end else begin
@@ -252,11 +250,115 @@
       Unet_M01_AXI_wstrb    <= 4'b0;
       Unet_M01_AXI_wvalid   <= 1'b1;
 
-      //AW
+      
+    end
+  end
+
+  always @(posedge ACLK or posedge ARESETN ) begin
+    if (!ARESETN) begin
       Unet_M01_AXI_awaddr   <= 32'b0;
       Unet_M01_AXI_wdata    <= 32'b0;
       Unet_M01_AXI_wlast    <= 1'b0;
     end
+    else begin
+      case(S_cur)
+      Trigger:begin
+        case (count)
+          3'd0: begin             //write opcode into nsc_base_address + SP_register_offset
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset;
+            Unet_M01_AXI_wdata    <= 32'h0000_01A4;
+          end
+          3'd1: begin             //write way into nsc_base_address + SP_register_offset + 4
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd4;
+            Unet_M01_AXI_wdata    <= 32'h0000_0100;
+          end
+          3'd2: begin             //write row_address into nsc_base_address + SP_register_offset + 8
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd8;
+            Unet_M01_AXI_wdata    <= 32'h0000_0100;
+          end
+          3'd3: begin             //write done flag into nsc_base_address + CC_register_offset
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + CC_register_offset;
+            Unet_M01_AXI_wdata    <= 32'h0000_0001;
+          end
+          default: begin           //otherwise                                                                //need check wlast
+            Unet_M01_AXI_awaddr   <= 32'h0000_0000;
+            Unet_M01_AXI_wdata    <= 32'h0000_0000;
+          end
+        endcase
+      end
+      Check:begin
+        case (count)
+          3'd0: begin             //write opcode into nsc_base_address + SP_register_offset
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset;
+            Unet_M01_AXI_wdata    <= 32'h0000_0130;
+          end
+          3'd1: begin             //write way into nsc_base_address + SP_register_offset + 4
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd4;
+            Unet_M01_AXI_wdata    <= 32'h0000_0100;
+          end
+          3'd2: begin             //write statusreport_reg into nsc_base_address + 8
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + CC_register_offset + 5'd8;
+            Unet_M01_AXI_wdata    <= statusreport_reg;
+          end
+          3'd3: begin             //reset data in statusreport_reg
+            Unet_M01_AXI_awaddr   <= statusreport_reg;
+            Unet_M01_AXI_wdata    <= 32'h0000_0000;
+          end
+          3'd4: begin             //write done flag into nsc_base_address + CC_register_offset
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + CC_register_offset;
+            Unet_M01_AXI_wdata    <= 32'h0000_0001;
+          end
+          default: begin           //otherwise
+            Unet_M01_AXI_awaddr   <= 32'h0000_0000;
+            Unet_M01_AXI_wdata    <= 32'h0000_0000;
+          end
+        endcase
+      end
+      Transfer:begin
+        case (count)
+          3'd0: begin             //write opcode into nsc_base_address + SP_register_offset
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset;
+            Unet_M01_AXI_wdata    <= 32'h0000_0338;
+          end
+          3'd1: begin             //write way into nsc_base_address + SP_register_offset + 4
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd4;
+            Unet_M01_AXI_wdata    <= 32'h0000_0100;
+          end
+          3'd2: begin             //write row_address into nsc_base_address + SP_register_offset + 8
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd8;
+            Unet_M01_AXI_wdata    <= 32'h0000_0100;
+          end
+          3'd3: begin             //write BRAM address into nsc_base_address + SP_register_offset + 12
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd12;
+            Unet_M01_AXI_wdata    <= 32'h4581_0000;
+          end
+          3'd4: begin             //write ECC address into nsc_base_address + SP_register_offset + 16    //need check
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd16;
+            Unet_M01_AXI_wdata    <= 32'h0000_0001;
+          end
+          3'd5: begin             //write ERR address into nsc_base_address + SP_register_offset + 20     //need check
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd20;
+            Unet_M01_AXI_wdata    <= 32'h0000_0001;
+          end
+          3'd6: begin             //write Complete address into nsc_base_address + SP_register_offset + 24
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd24;
+            Unet_M01_AXI_wdata    <= 32'h0000_0001;
+          end
+          default: begin          //otherwise
+            Unet_M01_AXI_awaddr   <= 32'h0000_0000;
+            Unet_M01_AXI_wdata    <= 32'h0000_0000;
+          end
+        endcase
+      end
+      default:begin
+        Unet_M01_AXI_awaddr   <= 32'b0;
+        Unet_M01_AXI_wdata    <= 32'b0;
+        Unet_M01_AXI_wlast    <= 1'b0;      //need check
+      end
+      endcase
+    end
+
+    
   end
 
   endmodule
