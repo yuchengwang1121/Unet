@@ -116,18 +116,22 @@
 
   //Ctrl signals
   wire addr_done;
-  wire Trigger_done, Check_done, Trans_done;
+  wire Trigger_done, Check_done, Trans_done, Read_done, Write_done;
+
+  reg [2:0] count;
+  reg [2:0] S_cur, S_next;
+  reg [31:0] base_address;
 
   //Crtl signal for M0 araddr
-  assign read_done = (Unet_M00_AXI_rvalid && Unet_M00_AXI_rready) && (Unet_M00_AXI_rresp == 2'b00)? 1'b1 : 1'b0;
+  assign Read_done = (Unet_M00_AXI_rvalid && Unet_M00_AXI_rready) && (Unet_M00_AXI_rresp == 2'b00)? 1'b1 : 1'b0;
 
   //Ctrl signal for FSM changing
-  assign Trigger_done = (count == 3'd4)? 1'b1 : 1'b0;
-  assign Check_done   = (count == 3'd4)? 1'b1 : 1'b0;
-  assign Trans_done   = (count == 3'd7)? 1'b1 : 1'b0;
+  assign Trigger_done = ((S_cur == Trigger) && (count == 3'd4))? 1'b1 : 1'b0;
+  assign Check_done   = ((S_cur == Check) && (count == 3'd5))? 1'b1 : 1'b0;
+  assign Trans_done   = ((S_cur == Transfer) && (count == 3'd7))? 1'b1 : 1'b0;
 
   //Crtl signal for count
-  assign write_done = (Unet_M01_AXI_bvalid && Unet_M01_AXI_bready) && (Unet_M01_AXI_bresp == 2'b00)? 1'b1 : 1'b0;
+  assign Write_done = (Unet_M01_AXI_bvalid && Unet_M01_AXI_bready) && (Unet_M01_AXI_bresp == 2'b00)? 1'b1 : 1'b0;
 
 
   // <----------------------base_address---------------------->
@@ -141,21 +145,19 @@
     end
     else begin
       //Using AR & R channel
-      Unet_M00_AXI_araddr     <= (read_done)? Unet_M00_AXI_araddr  + 3'd4 : Unet_M00_AXI_araddr;
+      Unet_M00_AXI_araddr     <= (Read_done)? Unet_M00_AXI_araddr  + 3'd4 : Unet_M00_AXI_araddr;
       Unet_M00_AXI_arvalid    <= 1'b1;
       Unet_M00_AXI_rready     <= 1'b1;
     end
   end
   
   //read block list for BRAM
-  reg [31:0] base_address;
   always @(posedge ACLK or posedge ARESETN) begin
     if(!ARESETN)  base_address <= 32'b0;
     else          base_address <= Unet_M00_AXI_rdata;
   end
 
   // <----------------------FSM---------------------->
-  reg [2:0] S_cur, S_next;
   //Changing FSM state from State_next to State_current
   always @(posedge ACLK or posedge ARESETN)begin
     if(!ARESETN)  S_cur <= Init;
@@ -184,10 +186,10 @@
   end
 
   //Conut the number of command write into prticular place
-  reg [2:0] count;
+  
   always @(posedge ACLK or posedge ARESETN) begin
     if (!ARESETN)   count <= 3'b0;   
-    else            count <= (write_done)? count + 1'b1 : count;
+    else            count <= (Write_done)? count + 1'b1 : count;
   end
 
   // <----------------------Command to helper---------------------->
@@ -215,7 +217,6 @@
       Unet_M01_AXI_awprot   <= 3'b0;
       Unet_M01_AXI_awqos    <= 4'b0;
       Unet_M01_AXI_awregion <= 4'b0;
-      Unet_M01_AXI_awsize   <= 3'b0;
       Unet_M01_AXI_awvalid  <= 1'b0;
       Unet_M01_AXI_bready   <= 1'b0;
       Unet_M01_AXI_wstrb    <= 4'b0;
@@ -244,7 +245,7 @@
       Unet_M01_AXI_awprot   <= 3'b0;
       Unet_M01_AXI_awqos    <= 4'b0;
       Unet_M01_AXI_awregion <= 4'b0;
-      Unet_M01_AXI_awsize   <= 3'b0;
+      
       Unet_M01_AXI_awvalid  <= 1'b1;
       Unet_M01_AXI_bready   <= 1'b1;
       Unet_M01_AXI_wstrb    <= 4'b0;
@@ -257,10 +258,13 @@
   always @(posedge ACLK or posedge ARESETN ) begin
     if (!ARESETN) begin
       Unet_M01_AXI_awaddr   <= 32'b0;
+      Unet_M01_AXI_awsize   <= 3'b0;
       Unet_M01_AXI_wdata    <= 32'b0;
       Unet_M01_AXI_wlast    <= 1'b0;
     end
     else begin
+      Unet_M01_AXI_awsize   <= 3'b010;
+      Unet_M01_AXI_wlast    <= 1'b1;
       case(S_cur)
       Trigger:begin
         case (count)
