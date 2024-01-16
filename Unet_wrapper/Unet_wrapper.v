@@ -288,7 +288,7 @@
       Unet_M01_AXI_bready    <= (Unet_M01_AXI_bvalid && !Unet_M01_AXI_bready)? 1'b1:1'b0;
       case(S_cur)
       Trigger_AW:begin
-        Unet_M01_AXI_awvalid  <= 1'b1;
+        Unet_M01_AXI_awvalid  <= (Unet_M01_AXI_awready)? 1'b1:1'b0;
         Unet_M01_AXI_wvalid   <= 1'b0;
         W2FIFO                <= 1'b0;
       end
