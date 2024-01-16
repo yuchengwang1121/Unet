@@ -106,18 +106,25 @@
   parameter [15:0] ID_register_offset = 16'h0000; 
   parameter [15:0] CC_register_offset = 16'h3000; 
   parameter [15:0] SP_register_offset = 16'h4000;
-  parameter [31:0] statusreport_reg   = 32'h1234_5678;
+  parameter [31:0] completeflag_reg   = 32'h1700_0000;
+  parameter [31:0] statusreport_reg   = 32'h1700_0100;
+  parameter [31:0] errorinfo_reg      = 32'h1700_0200;
+
 
   //parameter for FSM
-  parameter [2:0] Init     = 3'b000,
-                  Trigger  = 3'b001,
-                  Check    = 3'b010,
-                  Transfer = 3'b011;
+  parameter [2:0] Init        = 3'b000,
+                  Trigger_AW  = 3'b001,
+                  Trigger_W   = 3'b010,
+                  Check_AW    = 3'b011,
+                  Check_W     = 3'b100,
+                  Transfer_AW = 3'b101,
+                  Transfer_W  = 3'b110;
 
   //Ctrl signals
   wire addr_done;
   wire Trigger_done, Check_done, Trans_done, Read_done, Write_done;
 
+  reg W2FIFO;
   reg [2:0] count;
   reg [2:0] S_cur, S_next;
   reg [31:0] base_address;
@@ -126,9 +133,9 @@
   assign Read_done = (Unet_M00_AXI_rvalid && Unet_M00_AXI_rready) && (Unet_M00_AXI_rresp == 2'b00)? 1'b1 : 1'b0;
 
   //Ctrl signal for FSM changing
-  assign Trigger_done = ((S_cur == Trigger) && (count == 3'd4))? 1'b1 : 1'b0;
-  assign Check_done   = ((S_cur == Check) && (count == 3'd5))? 1'b1 : 1'b0;
-  assign Trans_done   = ((S_cur == Transfer) && (count == 3'd7))? 1'b1 : 1'b0;
+  assign Trigger_done = ((S_cur == Trigger_W) && (count == 3'd4))? 1'b1 : 1'b0;
+  assign Check_done   = ((S_cur == Check_W) && (count == 3'd5))? 1'b1 : 1'b0;
+  assign Trans_done   = ((S_cur == Transfer_W) && (count == 3'd7))? 1'b1 : 1'b0;
 
   //Crtl signal for count
   assign Write_done = (Unet_M01_AXI_bvalid && Unet_M01_AXI_bready) && (Unet_M01_AXI_bresp == 2'b00)? 1'b1 : 1'b0;
@@ -167,29 +174,50 @@
   //FSM
   always @(*)begin
     case(S_cur)
-      Init:begin
-        S_next = Trigger;
+      Trigger_AW:begin
+        if(Unet_M01_AXI_awready)  S_next = Trigger_W;
+        else                      S_next = Trigger_AW;
       end
-      Trigger:begin
-        if(Trigger_done)  S_next = Check;
-        else              S_next = Trigger;
+      Trigger_W:begin
+        if (Trigger_done)         S_next = Check_AW;       
+        else if(Write_done)       S_next = Trigger_AW;
+        else                      S_next = Trigger_W;
       end
-      Check:begin
-        if(Check_done)    S_next = Transfer;
-        else              S_next = Check;
+      Check_AW:begin
+        if(Unet_M01_AXI_awready)  S_next = Check_W;
+        else                      S_next = Check_AW;
       end
-      default:begin       //transfer
-        if(Trans_done)    S_next = Init;
-        else              S_next = Transfer;
+      Check_W:begin
+        if (Check_done)           S_next = Transfer_AW;   
+        else if(Write_done)       S_next = Check_AW;
+        else                      S_next = Check_W;
+      end
+      Transfer_AW:begin
+        if(Unet_M01_AXI_awready)  S_next = Transfer_W;
+        else                      S_next = Transfer_AW;
+      end
+      Transfer_W:begin
+        if (Trans_done)           S_next = Init;
+        else if(Write_done)       S_next = Transfer_AW;
+        else                      S_next = Transfer_W;
+      end
+      default:begin       //Init
+        S_next = Trigger_AW;
       end
     endcase
   end
 
   //Conut the number of command write into prticular place
-  
   always @(posedge ACLK or posedge ARESETN) begin
     if (!ARESETN)   count <= 3'b0;   
-    else            count <= (Write_done)? count + 1'b1 : count;
+    else begin
+      if (Trigger_done || Check_done || Trans_done) begin
+        count <= 3'b0;
+      end
+      else begin
+        count <= (Write_done)? count + 1'b1 : count;
+      end
+    end
   end
 
   // <----------------------Command to helper---------------------->
@@ -217,10 +245,10 @@
       Unet_M01_AXI_awprot   <= 3'b0;
       Unet_M01_AXI_awqos    <= 4'b0;
       Unet_M01_AXI_awregion <= 4'b0;
-      Unet_M01_AXI_awvalid  <= 1'b0;
-      Unet_M01_AXI_bready   <= 1'b0;
+      // Unet_M01_AXI_awvalid  <= 1'b0;
+      // Unet_M01_AXI_bready   <= 1'b0;
       Unet_M01_AXI_wstrb    <= 4'b0;
-      Unet_M01_AXI_wvalid   <= 1'b0;
+      // Unet_M01_AXI_wvalid   <= 1'b0;
     end else begin
       //Not using AR & R channel
       Unet_M01_AXI_araddr   <= 32'b0;
@@ -245,13 +273,56 @@
       Unet_M01_AXI_awprot   <= 3'b0;
       Unet_M01_AXI_awqos    <= 4'b0;
       Unet_M01_AXI_awregion <= 4'b0;
-      
-      Unet_M01_AXI_awvalid  <= 1'b1;
-      Unet_M01_AXI_bready   <= 1'b1;
       Unet_M01_AXI_wstrb    <= 4'b0;
-      Unet_M01_AXI_wvalid   <= 1'b1;
+    end
+  end
 
-      
+  //M1 valid & ready Ctrl
+  always @(posedge ACLK or posedge ARESETN)begin
+    if (!ARESETN) begin
+      Unet_M01_AXI_awvalid  <= 1'b0;
+      Unet_M01_AXI_wvalid   <= 1'b0;
+      Unet_M01_AXI_bready   <= 1'b0;
+      W2FIFO                <= 1'b0;
+    end else begin
+      Unet_M01_AXI_bready    <= (Unet_M01_AXI_bvalid && !Unet_M01_AXI_bready)? 1'b1:1'b0;
+      case(S_cur)
+      Trigger_AW:begin
+        Unet_M01_AXI_awvalid  <= 1'b1;
+        Unet_M01_AXI_wvalid   <= 1'b0;
+        W2FIFO                <= 1'b0;
+      end
+      Trigger_W:begin
+        Unet_M01_AXI_awvalid  <= 1'b0;
+        Unet_M01_AXI_wvalid   <= (W2FIFO)? 1'b0:1'b1;
+        W2FIFO                <= 1'b1;
+      end
+      Check_AW:begin
+        Unet_M01_AXI_awvalid  <= 1'b1;
+        Unet_M01_AXI_wvalid   <= 1'b0;
+        W2FIFO                <= 1'b0;
+      end
+      Check_W:begin
+        Unet_M01_AXI_awvalid  <= 1'b0;
+        Unet_M01_AXI_wvalid   <= (W2FIFO)? 1'b0:1'b1;
+        W2FIFO                <= 1'b1;
+      end
+      Transfer_AW:begin
+        Unet_M01_AXI_awvalid  <= 1'b1;
+        Unet_M01_AXI_wvalid   <= 1'b0;
+        W2FIFO                <= 1'b0;
+      end
+      Transfer_W:begin
+        Unet_M01_AXI_awvalid  <= 1'b0;
+        Unet_M01_AXI_wvalid   <= (W2FIFO)? 1'b0:1'b1;
+        W2FIFO                <= 1'b1;
+      end
+      default:begin       //Init
+        Unet_M01_AXI_awvalid  <= 1'b0;
+        Unet_M01_AXI_wvalid   <= 1'b0;
+        W2FIFO                <= 1'b0;
+      end
+    endcase
     end
   end
 
@@ -266,90 +337,141 @@
       Unet_M01_AXI_awsize   <= 3'b010;
       Unet_M01_AXI_wlast    <= 1'b1;
       case(S_cur)
-      Trigger:begin
+      Trigger_AW:begin
         case (count)
           3'd0: begin             //write opcode into nsc_base_address + SP_register_offset
             Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset;
-            Unet_M01_AXI_wdata    <= 32'h0000_01A4;
           end
           3'd1: begin             //write way into nsc_base_address + SP_register_offset + 4
             Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd4;
-            Unet_M01_AXI_wdata    <= 32'h0000_0100;
           end
           3'd2: begin             //write row_address into nsc_base_address + SP_register_offset + 8
             Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd8;
-            Unet_M01_AXI_wdata    <= 32'h0000_0100;
           end
           3'd3: begin             //write done flag into nsc_base_address + CC_register_offset
             Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + CC_register_offset;
-            Unet_M01_AXI_wdata    <= 32'h0000_0001;
           end
           default: begin           //otherwise                                                                //need check wlast
             Unet_M01_AXI_awaddr   <= 32'h0000_0000;
-            Unet_M01_AXI_wdata    <= 32'h0000_0000;
           end
         endcase
       end
-      Check:begin
+
+      Trigger_W:begin
         case (count)
           3'd0: begin             //write opcode into nsc_base_address + SP_register_offset
-            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset;
-            Unet_M01_AXI_wdata    <= 32'h0000_0130;
+            Unet_M01_AXI_wdata    <= 32'h0000_01A4;
           end
           3'd1: begin             //write way into nsc_base_address + SP_register_offset + 4
-            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd4;
-            Unet_M01_AXI_wdata    <= 32'h0000_0100;
-          end
-          3'd2: begin             //write statusreport_reg into nsc_base_address + 8
-            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + CC_register_offset + 5'd8;
-            Unet_M01_AXI_wdata    <= statusreport_reg;
-          end
-          3'd3: begin             //reset data in statusreport_reg
-            Unet_M01_AXI_awaddr   <= statusreport_reg;
-            Unet_M01_AXI_wdata    <= 32'h0000_0000;
-          end
-          3'd4: begin             //write done flag into nsc_base_address + CC_register_offset
-            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + CC_register_offset;
-            Unet_M01_AXI_wdata    <= 32'h0000_0001;
-          end
-          default: begin           //otherwise
-            Unet_M01_AXI_awaddr   <= 32'h0000_0000;
-            Unet_M01_AXI_wdata    <= 32'h0000_0000;
-          end
-        endcase
-      end
-      Transfer:begin
-        case (count)
-          3'd0: begin             //write opcode into nsc_base_address + SP_register_offset
-            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset;
-            Unet_M01_AXI_wdata    <= 32'h0000_0338;
-          end
-          3'd1: begin             //write way into nsc_base_address + SP_register_offset + 4
-            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd4;
             Unet_M01_AXI_wdata    <= 32'h0000_0100;
           end
           3'd2: begin             //write row_address into nsc_base_address + SP_register_offset + 8
-            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd8;
             Unet_M01_AXI_wdata    <= 32'h0000_0100;
+          end
+          3'd3: begin             //write done flag into nsc_base_address + CC_register_offset
+            Unet_M01_AXI_wdata    <= 32'h0000_0001;
+          end
+          default: begin           //otherwise
+            Unet_M01_AXI_wdata    <= 32'h0000_0000;
+          end
+        endcase
+      end
+      Check_AW:begin
+        case (count)
+          3'd0: begin             //write opcode into nsc_base_address + SP_register_offset
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset;
+          end
+          3'd1: begin             //write way into nsc_base_address + SP_register_offset + 4
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd4;
+          end
+          3'd2: begin             //write statusreport_reg into nsc_base_address + 8
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd8;
+          end
+          3'd3: begin             //reset data in statusreport_reg
+            Unet_M01_AXI_awaddr   <= statusreport_reg;
+          end
+          3'd4: begin             //write done flag into nsc_base_address + CC_register_offset
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + CC_register_offset;
+          end
+          default: begin           //otherwise
+            Unet_M01_AXI_awaddr   <= 32'h0000_0000;
+          end
+        endcase
+      end
+      Check_W:begin
+        case (count)
+          3'd0: begin             //write opcode into nsc_base_address + SP_register_offset
+            Unet_M01_AXI_wdata    <= 32'h0000_0130;
+          end
+          3'd1: begin             //write way into nsc_base_address + SP_register_offset + 4
+            Unet_M01_AXI_wdata    <= 32'h0000_0100;
+          end
+          3'd2: begin             //write statusreport_reg into nsc_base_address + 8
+            Unet_M01_AXI_wdata    <= statusreport_reg;
+          end
+          3'd3: begin             //reset data in statusreport_reg
+            Unet_M01_AXI_wdata    <= 32'h0000_0000;
+          end
+          3'd4: begin             //write done flag into nsc_base_address + CC_register_offset
+            Unet_M01_AXI_wdata    <= 32'h0000_0001;
+          end
+          default: begin           //otherwise
+            Unet_M01_AXI_wdata    <= 32'h0000_0000;
+          end
+        endcase
+      end
+      Transfer_AW:begin
+        case (count)
+          3'd0: begin             //write opcode into nsc_base_address + SP_register_offset
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset;
+          end
+          3'd1: begin             //write way into nsc_base_address + SP_register_offset + 4
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd4;
+          end
+          3'd2: begin             //write row_address into nsc_base_address + SP_register_offset + 8
+            Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd8;
           end
           3'd3: begin             //write BRAM address into nsc_base_address + SP_register_offset + 12
             Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd12;
-            Unet_M01_AXI_wdata    <= 32'h4581_0000;
           end
           3'd4: begin             //write ECC address into nsc_base_address + SP_register_offset + 16    //need check
             Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd16;
-            Unet_M01_AXI_wdata    <= 32'h0000_0001;
           end
           3'd5: begin             //write ERR address into nsc_base_address + SP_register_offset + 20     //need check
             Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd20;
-            Unet_M01_AXI_wdata    <= 32'h0000_0001;
           end
           3'd6: begin             //write Complete address into nsc_base_address + SP_register_offset + 24
             Unet_M01_AXI_awaddr   <= 32'h43C0_0000 + SP_register_offset + 5'd24;
-            Unet_M01_AXI_wdata    <= 32'h0000_0001;
+          end
+          default: begin
+          Unet_M01_AXI_awaddr   <= 32'h0000_0000;
+          end
+        endcase
+      end
+      Transfer_W:begin
+        case (count)
+          3'd0: begin             //write opcode into nsc_base_address + SP_register_offset
+            Unet_M01_AXI_wdata    <= 32'h0000_0338;
+          end
+          3'd1: begin             //write way into nsc_base_address + SP_register_offset + 4
+            Unet_M01_AXI_wdata    <= 32'h0000_0100;
+          end
+          3'd2: begin             //write row_address into nsc_base_address + SP_register_offset + 8
+            Unet_M01_AXI_wdata    <= 32'h0000_0100;
+          end
+          3'd3: begin             //write BRAM address into nsc_base_address + SP_register_offset + 12
+            Unet_M01_AXI_wdata    <= 32'h4581_0000;
+          end
+          3'd4: begin             //write ECC address into nsc_base_address + SP_register_offset + 16
+            Unet_M01_AXI_wdata    <= 32'h4580_0100;
+          end
+          3'd5: begin             //write ERR address into nsc_base_address + SP_register_offset + 20
+            Unet_M01_AXI_wdata    <= errorinfo_reg;
+          end
+          3'd6: begin             //write Complete address into nsc_base_address + SP_register_offset + 24
+            Unet_M01_AXI_wdata    <= completeflag_reg;
           end
           default: begin          //otherwise
-            Unet_M01_AXI_awaddr   <= 32'h0000_0000;
             Unet_M01_AXI_wdata    <= 32'h0000_0000;
           end
         endcase
@@ -361,8 +483,6 @@
       end
       endcase
     end
-
-    
   end
 
   endmodule
